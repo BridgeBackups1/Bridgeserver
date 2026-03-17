@@ -1,60 +1,31 @@
-// index.js
+const WebSocket = require('ws');
+const http = require('http');
+const express = require('express');
 
-// Main Worker: forwards all WebSocket connections to the Durable Object
-export default {
-  async fetch(request, env) {
-    const upgrade = request.headers.get("Upgrade");
+const app = express();
+const PORT = process.env.PORT || 8080;
 
-    // If not WebSocket, return simple online message
-    if (upgrade !== "websocket") {
-      return new Response(
-        "Roblox Bridge is Online! (Connect via WSS)",
-        { status: 200 }
-      );
-    }
+app.get('/', (req, res) => res.send('Bridge Online'));
 
-    // Durable Object binding: Chat_KV
-    const id = env.Chat_KV.idFromName("global-chat");
-    const room = env.Chat_KV.get(id);
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
-    // Forward the request to the Durable Object
-    return room.fetch(request);
-  }
-};
-
-// Durable Object class: manages all WebSocket clients
-export class Chat_KV {
-  constructor(state) {
-    this.state = state;
-    this.clients = new Set(); // stores all connected sockets
-  }
-
-  async fetch(request) {
-    // Create a WebSocket pair
-    const [client, server] = Object.values(new WebSocketPair());
-    server.accept();
-
-    // Add new client
-    this.clients.add(server);
-
-    // Broadcast any incoming messages to all clients
-    server.addEventListener("message", (event) => {
-      for (const ws of this.clients) {
-        if (ws.readyState === 1) {
-          ws.send(event.data);
+wss.on('connection', (ws) => {
+    ws.room = 'EN'; 
+    ws.on('message', (data) => {
+        const msg = data.toString();
+        if (msg.startsWith("JOIN:")) {
+            const newRoom = msg.split(":")[1];
+            ws.room = newRoom;
+            console.log(`User moved to channel: ${newRoom}`);
+            return;
         }
-      }
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN && client.room === ws.room) {
+                client.send(msg);
+            }
+        });
     });
+});
 
-    // Remove disconnected clients
-    server.addEventListener("close", () => {
-      this.clients.delete(server);
-    });
-
-    // Return WebSocket upgrade response
-    return new Response(null, {
-      status: 101,
-      webSocket: client
-    });
-  }
-}
+server.listen(PORT, () => console.log(`Bridge running on ${PORT}`));
